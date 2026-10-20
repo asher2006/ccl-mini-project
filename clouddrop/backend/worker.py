@@ -94,6 +94,9 @@ def process_job(job_id: str, url: str, fmt: str, email: str = ""):
         if COOKIE_FILE.exists() and COOKIE_FILE.stat().st_size > 0:
             base_args.extend(["--cookies", str(COOKIE_FILE)])
 
+        if settings.proxy_url:
+            base_args.extend(["--proxy", settings.proxy_url])
+
         if fmt == "mp3":
             ydl_args = ["yt-dlp"] + base_args + [
                 "-x", "--audio-format", "mp3",

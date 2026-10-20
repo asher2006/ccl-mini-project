@@ -12,6 +12,7 @@ class Settings:
     s3_bucket: str = ""
     sqs_url: str = ""
     sns_arn: str = ""
+    proxy_url: str = ""
     db_host: str = ""
     db_port: int = 5432
     db_name: str = "clouddrop"
@@ -27,6 +28,10 @@ class Settings:
             self.s3_bucket = get_param("/clouddrop/s3_bucket")
             self.sqs_url = get_param("/clouddrop/sqs_url")
             self.sns_arn = get_param("/clouddrop/sns_arn")
+            try:
+                self.proxy_url = get_param("/clouddrop/proxy_url")
+            except Exception:
+                self.proxy_url = ""
         except Exception as e:
             # Fallback to env vars for local dev
             self.db_host = os.getenv("DB_HOST", "localhost")
@@ -36,5 +41,6 @@ class Settings:
             self.s3_bucket = os.getenv("S3_BUCKET", "")
             self.sqs_url = os.getenv("SQS_URL", "")
             self.sns_arn = os.getenv("SNS_ARN", "")
+            self.proxy_url = os.getenv("PROXY_URL", "")
 
 settings = Settings()
