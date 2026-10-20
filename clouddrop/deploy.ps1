@@ -5,6 +5,8 @@
 
 $KEY = "C:\Users\Ulric\.ssh\clouddrop-key.pem"
 $INSTANCE_ID = "i-041d9c437d77036dc"
+$BACKEND = "$PSScriptRoot\backend"
+$FRONTEND_DIST = "$PSScriptRoot\frontend\dist"
 
 $EC2_IP = aws ec2 describe-instances --instance-ids $INSTANCE_ID --query "Reservations[0].Instances[0].PublicIpAddress" --output text
 if (-not $EC2_IP -or $EC2_IP -eq "None") {
@@ -15,26 +17,37 @@ Write-Host "Deploying to $EC2_IP..." -ForegroundColor Cyan
 
 # Copy backend files
 & scp -o StrictHostKeyChecking=no -i $KEY `
-  clouddrop/backend/main.py `
-  clouddrop/backend/config.py `
-  clouddrop/backend/database.py `
-  clouddrop/backend/worker.py `
-  clouddrop/backend/requirements.txt `
+  "$BACKEND/main.py" `
+  "$BACKEND/config.py" `
+  "$BACKEND/database.py" `
+  "$BACKEND/worker.py" `
+  "$BACKEND/requirements.txt" `
   "ec2-user@${EC2_IP}:/tmp/"
 
 # Copy frontend dist (built index.html + assets)
 & ssh -o StrictHostKeyChecking=no -i $KEY "ec2-user@$EC2_IP" "rm -rf /tmp/dist"
 & scp -o StrictHostKeyChecking=no -i $KEY -r `
-  clouddrop/frontend/dist `
+  "$FRONTEND_DIST" `
   "ec2-user@${EC2_IP}:/tmp/"
+
+# Optional: upload cookies if a local export exists (clouddrop/backend/cookies.txt)
+$COOKIES_LOCAL = "$PSScriptRoot\backend\cookies.txt"
+if ((Test-Path $COOKIES_LOCAL) -and (Get-Item $COOKIES_LOCAL).Length -gt 0) {
+  Write-Host "Uploading cookies.txt to server..." -ForegroundColor Yellow
+  & scp -o StrictHostKeyChecking=no -i $KEY "$COOKIES_LOCAL" "ec2-user@${EC2_IP}:/tmp/cookies.txt"
+} else {
+  Write-Host "No local cookies.txt found (backend/cookies.txt) - YouTube/Instagram downloads may hit bot-checks." -ForegroundColor Yellow
+}
 
 # Move files on server, sync frontend, install deps, restart service
 $remote = @"
 sudo cp /tmp/main.py /tmp/config.py /tmp/database.py /tmp/worker.py /opt/clouddrop/backend/
 sudo rm -rf /opt/clouddrop/frontend/dist
 sudo cp -r /tmp/dist /opt/clouddrop/frontend/dist
+if [ -f /tmp/cookies.txt ]; then sudo install -m 640 -o clouddrop -g clouddrop /tmp/cookies.txt /etc/clouddrop/cookies.txt; fi
 sudo chown -R clouddrop:clouddrop /opt/clouddrop/
-sudo pip3 install -r /tmp/requirements.txt -q
+sudo /opt/clouddrop/venv/bin/pip install -q -r /tmp/requirements.txt
+sudo /opt/clouddrop/venv/bin/pip install -q -U yt-dlp
 sudo systemctl restart clouddrop
 sudo systemctl status clouddrop --no-pager -l | head -n 12
 "@

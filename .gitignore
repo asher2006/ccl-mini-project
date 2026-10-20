@@ -17,6 +17,7 @@ rootkey.csv
 credentials.csv
 *.csv
 .aws/
+cookies.txt
 
 # Node & Frontend dependencies
 node_modules/
