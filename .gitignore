@@ -1,0 +1,41 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+
+# AWS & Security credentials (NEVER COMMIT)
+*.pem
+*.key
+rootkey.csv
+credentials.csv
+*.csv
+.aws/
+
+# Node & Frontend dependencies
+node_modules/
+.npm
+dist/
+build/
+.vite/
+
+# Temporary and log files
+*.log
+/tmp/
+.DS_Store
+Thumbs.db
+
+# OS specific files
+desktop.ini
+
+# IDE & Editor settings
+.idea/
+.vscode/
+*.swp
+*.swo
