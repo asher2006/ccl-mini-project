@@ -86,7 +86,7 @@ def process_job(job_id: str, url: str, fmt: str, email: str = ""):
             "--impersonate", "chrome",
         ]
         if is_youtube:
-            base_args += ["--extractor-args", "youtube:player_client=android_vr,ios"]
+            base_args += ["--extractor-args", "youtube:player_client=android,android_vr,ios"]
         base_args += [
             "--max-filesize", "200m",
             "--retries", "3",
