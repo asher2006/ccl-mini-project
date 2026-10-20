@@ -83,13 +83,16 @@ def process_job(job_id: str, url: str, fmt: str, email: str = ""):
         base_args = [
             "--no-playlist",
             "--no-overwrites",
+            "--impersonate", "chrome",
+        ]
+        if is_youtube:
+            base_args += ["--extractor-args", "youtube:player_client=android_vr,ios"]
+        base_args += [
             "--max-filesize", "200m",
             "--retries", "3",
             "--fragment-retries", "3",
             "--output", str(out_dir / "%(title).120B.%(ext)s"),
         ]
-        if is_youtube:
-            base_args += ["--extractor-args", "youtube:player_client=ios,android,web"]
 
         if COOKIE_FILE.exists() and COOKIE_FILE.stat().st_size > 0:
             base_args.extend(["--cookies", str(COOKIE_FILE)])
