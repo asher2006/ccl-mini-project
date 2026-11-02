@@ -12,25 +12,42 @@ function formatDate(s) {
   }
 }
 
+function formatBytes(bytes) {
+  if (!bytes || bytes <= 0) return '0 B'
+  const k = 1024
+  const sizes = ['B', 'KB', 'MB', 'GB']
+  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
+}
+
+const OPERATIONS = [
+  { id: 'img2pdf', label: 'Image to PDF', icon: '🖼️', desc: 'Convert JPG, PNG, or WEBP images into a clean PDF document' },
+  { id: 'pdf2img', label: 'PDF to Image', icon: '📸', desc: 'Extract high-resolution PNG images from PDF pages (auto-zipped if multi-page)' },
+  { id: 'compress', label: 'Compress PDF', icon: '🗜️', desc: 'Reduce PDF file size using Ghostscript optimization engine' },
+]
+
 export default function App() {
-  const [url, setUrl] = useState('')
-  const [format, setFormat] = useState('mp4')
-  const [email, setEmail] = useState('')
+  const [operation, setOperation] = useState('img2pdf')
+  const [selectedFiles, setSelectedFiles] = useState([])
+  const [compressLevel, setCompressLevel] = useState('ebook')
+  const [dpi, setDpi] = useState('150')
   const [jobs, setJobs] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [statusMsg, setStatusMsg] = useState('')
   const [time, setTime] = useState('')
-  
+
   // Windows state
   const [showMain, setShowMain] = useState(true)
   const [showLogs, setShowLogs] = useState(false)
   const [showAbout, setShowAbout] = useState(false)
   const [startMenuOpen, setStartMenuOpen] = useState(false)
-  const [activeWindow, setActiveWindow] = useState('main') // 'main' | 'logs' | 'about'
+  const [activeWindow, setActiveWindow] = useState('main')
 
+  const fileInputRef = useRef(null)
   const pollingRef = useRef(null)
 
-  // Real-time clock in system tray
+  // System clock
   useEffect(() => {
     const updateTime = () => {
       const now = new Date()
@@ -57,33 +74,48 @@ export default function App() {
     return () => clearInterval(pollingRef.current)
   }, [])
 
+  const handleFileChange = (e) => {
+    if (e.target.files) {
+      const fileList = Array.from(e.target.files)
+      setSelectedFiles(fileList)
+    }
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
     setError('')
-    const trimmed = url.trim()
-    if (!trimmed) {
-      setError('ERROR: [NULL_PTR] Please specify a valid media URI.')
-      return
-    }
+    setStatusMsg('')
 
-    const lower = trimmed.toLowerCase()
-    if (!lower.includes('youtube.com') && !lower.includes('youtu.be') && !lower.includes('instagram.com')) {
-      setError('UNSUPPORTED_HOST: Valid platforms: YouTube, Instagram.')
+    if (!selectedFiles || selectedFiles.length === 0) {
+      setError('ERROR: [NULL_INPUT] Please select file(s) to process.')
       return
     }
 
     setLoading(true)
+    setStatusMsg('Uploading documents to Amazon S3...')
+
     try {
+      const formData = new FormData()
+      selectedFiles.forEach((f) => formData.append('files', f))
+      formData.append('operation', operation)
+
+      const options = {}
+      if (operation === 'compress') options.compress_level = compressLevel
+      if (operation === 'pdf2img') options.dpi = parseInt(dpi, 10) || 150
+      formData.append('options', JSON.stringify(options))
+
       const r = await fetch(`${API}/jobs`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: trimmed, format, email: email.trim() })
+        body: formData,
       })
       const resp = await r.json()
       if (!r.ok) {
-        throw new Error(resp.detail || 'EXEC_FAIL: Cloud task rejected.')
+        throw new Error(resp.detail || 'Processing task rejected.')
       }
-      setUrl('')
+
+      setSelectedFiles([])
+      if (fileInputRef.current) fileInputRef.current.value = ''
+      setStatusMsg(`Job dispatched to SQS queue: ${resp.job_id.substring(0, 8)}...`)
       fetchJobs()
     } catch (err) {
       setError(err.message)
@@ -92,146 +124,179 @@ export default function App() {
     }
   }
 
+  const totalInputSize = selectedFiles.reduce((acc, f) => acc + f.size, 0)
+
   return (
     <div
-      className="scanlines"
       onClick={() => startMenuOpen && setStartMenuOpen(false)}
       style={{
         minHeight: '100vh',
         display: 'flex',
         flexDirection: 'column',
-        position: 'relative'
+        position: 'relative',
+        backgroundColor: '#008080',
       }}
     >
-      
-      {/* ── DESKTOP ICONS (Visible on desktop/tablet) ── */}
-      <div style={{
-        position: 'absolute',
-        top: 16,
-        left: 16,
-        display: 'flex',
-        flexDirection: 'column',
-        gap: 20,
-        zIndex: 5,
-        userSelect: 'none'
-      }} className="desktop-only">
+      {/* ── DESKTOP SHORTCUT ICONS ── */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 16,
+          left: 16,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 20,
+          zIndex: 5,
+          userSelect: 'none',
+        }}
+        className="desktop-only"
+      >
         <div
           onClick={() => { setShowMain(true); setActiveWindow('main'); }}
-          style={{ width: 74, textAlign: 'center', cursor: 'pointer' }}
+          style={{ width: 76, textAlign: 'center', cursor: 'pointer' }}
         >
-          <div style={{
-            width: 44,
-            height: 44,
-            margin: '0 auto 4px',
-            background: 'var(--surface)',
-            border: '2px outset #fff',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: 22
-          }}>
-            💾
+          <div
+            style={{
+              width: 44,
+              height: 44,
+              margin: '0 auto 4px',
+              background: '#c0c0c0',
+              border: '2px solid #ffffff',
+              borderRightColor: '#000000',
+              borderBottomColor: '#000000',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 22,
+            }}
+          >
+            📑
           </div>
-          <span style={{
-            fontSize: 11,
-            color: '#fff',
-            background: activeWindow === 'main' && showMain ? '#000080' : 'transparent',
-            padding: '1px 3px',
-            fontFamily: 'var(--font-retro)'
-          }}>
-            CloudDrop.exe
+          <span
+            style={{
+              fontSize: 11,
+              color: '#fff',
+              background: activeWindow === 'main' && showMain ? '#000080' : 'transparent',
+              padding: '1px 3px',
+              fontFamily: 'var(--font-retro)',
+            }}
+          >
+            CloudDoc.exe
           </span>
         </div>
 
         <div
           onClick={() => { setShowLogs(true); setActiveWindow('logs'); }}
-          style={{ width: 74, textAlign: 'center', cursor: 'pointer' }}
+          style={{ width: 76, textAlign: 'center', cursor: 'pointer' }}
         >
-          <div style={{
-            width: 44,
-            height: 44,
-            margin: '0 auto 4px',
-            background: 'var(--surface)',
-            border: '2px outset #fff',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: 22
-          }}>
+          <div
+            style={{
+              width: 44,
+              height: 44,
+              margin: '0 auto 4px',
+              background: '#c0c0c0',
+              border: '2px solid #ffffff',
+              borderRightColor: '#000000',
+              borderBottomColor: '#000000',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 22,
+            }}
+          >
             🗄️
           </div>
-          <span style={{
-            fontSize: 11,
-            color: '#fff',
-            background: activeWindow === 'logs' && showLogs ? '#000080' : 'transparent',
-            padding: '1px 3px',
-            fontFamily: 'var(--font-retro)'
-          }}>
+          <span
+            style={{
+              fontSize: 11,
+              color: '#fff',
+              background: activeWindow === 'logs' && showLogs ? '#000080' : 'transparent',
+              padding: '1px 3px',
+              fontFamily: 'var(--font-retro)',
+            }}
+          >
             S3_Bucket
           </span>
         </div>
 
         <div
           onClick={() => { setShowAbout(true); setActiveWindow('about'); }}
-          style={{ width: 74, textAlign: 'center', cursor: 'pointer' }}
+          style={{ width: 76, textAlign: 'center', cursor: 'pointer' }}
         >
-          <div style={{
-            width: 44,
-            height: 44,
-            margin: '0 auto 4px',
-            background: 'var(--surface)',
-            border: '2px outset #fff',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            fontSize: 22
-          }}>
+          <div
+            style={{
+              width: 44,
+              height: 44,
+              margin: '0 auto 4px',
+              background: '#c0c0c0',
+              border: '2px solid #ffffff',
+              borderRightColor: '#000000',
+              borderBottomColor: '#000000',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: 22,
+            }}
+          >
             📋
           </div>
-          <span style={{
-            fontSize: 11,
-            color: '#fff',
-            background: activeWindow === 'about' && showAbout ? '#000080' : 'transparent',
-            padding: '1px 3px',
-            fontFamily: 'var(--font-retro)'
-          }}>
-            About.txt
+          <span
+            style={{
+              fontSize: 11,
+              color: '#fff',
+              background: activeWindow === 'about' && showAbout ? '#000080' : 'transparent',
+              padding: '1px 3px',
+              fontFamily: 'var(--font-retro)',
+            }}
+          >
+            Architecture
           </span>
         </div>
       </div>
 
       {/* ── WORKSPACE WINDOWS AREA ── */}
-      <div style={{
-        flex: 1,
-        padding: '16px 12px 64px',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        position: 'relative'
-      }}>
-        
-        {/* ── WINDOW 1: MAIN CLOUDDROP APPLICATION ── */}
+      <div
+        style={{
+          flex: 1,
+          padding: '16px 12px 64px',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'flex-start',
+          position: 'relative',
+        }}
+      >
+        {/* ── MAIN WINDOW ── */}
         {showMain && (
           <div
             className="bevel-outset"
             onClick={() => setActiveWindow('main')}
             style={{
               width: '100%',
-              maxWidth: 680,
+              maxWidth: 720,
               padding: 3,
               boxShadow: '4px 6px 0px rgba(0, 0, 0, 0.45)',
               zIndex: activeWindow === 'main' ? 20 : 10,
-              marginBottom: 16
+              marginBottom: 16,
             }}
           >
-            {/* WINDOW HEADER */}
-            <div className="title-bar" style={{
-              background: activeWindow === 'main' ? 'linear-gradient(90deg, #000080, #1084d0)' : 'linear-gradient(90deg, #808080, #a0a0a0)'
-            }}>
+            {/* WINDOW TITLE BAR */}
+            <div
+              className="title-bar"
+              style={{
+                background: activeWindow === 'main' ? '#000080' : '#808080',
+                color: '#ffffff',
+                padding: '3px 4px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                fontWeight: 'bold',
+                fontSize: 12,
+              }}
+            >
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                <span>💾</span>
-                <span style={{ letterSpacing: '0.5px' }}>CLOUDDROP.EXE [AWS-US-EAST-1]</span>
+                <span>📑</span>
+                <span style={{ letterSpacing: '0.5px' }}>CLOUDDROP PDF PROCESSOR</span>
               </div>
               <div style={{ display: 'flex', gap: 3 }}>
                 <button
@@ -257,316 +322,326 @@ export default function App() {
               </div>
             </div>
 
-            {/* MENUBAR */}
-            <div style={{
-              display: 'flex',
-              gap: 12,
-              padding: '3px 8px',
-              fontSize: 12,
-              borderBottom: '1px solid var(--border-dark)',
-              marginBottom: 8,
-              fontFamily: 'var(--font-mono)'
-            }}>
-              <span onClick={() => fetchJobs()} style={{ textDecoration: 'underline', cursor: 'pointer' }}>F</span>etch
-              <span onClick={() => { setShowLogs(true); setActiveWindow('logs'); }} style={{ textDecoration: 'underline', cursor: 'pointer' }}>L</span>ogs
-              <span onClick={() => { setShowAbout(true); setActiveWindow('about'); }} style={{ textDecoration: 'underline', cursor: 'pointer' }}>A</span>bout
-              <span style={{ marginLeft: 'auto', color: 'var(--text-muted)' }}>v2.4</span>
-            </div>
-
             {/* MAIN WINDOW BODY */}
-            <div style={{ padding: '6px 8px 10px' }}>
-              
-              {/* HERO NOTICE */}
-              <div className="bevel-inset" style={{
-                padding: '8px 12px',
-                marginBottom: 14,
-                backgroundColor: '#ffffcc',
-                fontSize: 12,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8
-              }}>
-                <span style={{ fontSize: 18 }}>⚠️</span>
-                <div>
-                  <strong>SYSTEM NOTICE:</strong> EC2 Worker unit active. Video & Audio assets converted via <code>ffmpeg</code> + <code>yt-dlp</code> pipeline.
-                </div>
+            <div style={{ padding: '10px 10px 12px' }}>
+              {/* OPERATION SELECTOR TABS (3 FEATURES ONLY) */}
+              <div style={{ display: 'flex', gap: 2, marginBottom: -2, zIndex: 2, position: 'relative' }}>
+                {OPERATIONS.map((op) => (
+                  <button
+                    key={op.id}
+                    onClick={() => {
+                      setOperation(op.id)
+                      setSelectedFiles([])
+                      if (fileInputRef.current) fileInputRef.current.value = ''
+                    }}
+                    style={{
+                      padding: '5px 14px',
+                      fontSize: 12,
+                      fontFamily: 'var(--font-mono)',
+                      background: operation === op.id ? '#c0c0c0' : '#a0a0a0',
+                      borderTop: '2px solid #ffffff',
+                      borderLeft: '2px solid #ffffff',
+                      borderRight: '2px solid #000000',
+                      borderBottom: operation === op.id ? 'none' : '2px solid #000000',
+                      fontWeight: operation === op.id ? 'bold' : 'normal',
+                      cursor: 'pointer',
+                      outline: 'none',
+                    }}
+                  >
+                    {op.icon} {op.label}
+                  </button>
+                ))}
               </div>
 
-              {/* DOWNLOAD FORM */}
-              <form onSubmit={handleSubmit}>
-                <div style={{ marginBottom: 12 }}>
-                  <label style={{
-                    display: 'block',
-                    fontFamily: 'var(--font-retro)',
-                    fontSize: 11,
-                    letterSpacing: '0.5px',
-                    marginBottom: 4
-                  }}>
-                    MEDIA_LOCATOR [TARGET URI]:
-                  </label>
-                  <input
-                    type="text"
-                    value={url}
-                    onChange={e => setUrl(e.target.value)}
-                    placeholder="https://youtube.com/watch?v=... OR instagram.com/reel/..."
-                    className="bevel-inset"
-                    style={{
-                      width: '100%',
-                      padding: '8px 10px',
-                      outline: 'none',
-                      fontSize: 13,
-                      fontFamily: 'var(--font-mono)'
-                    }}
-                  />
-                </div>
+              {/* TAB CONTENT PANEL */}
+              <div
+                className="bevel-outset"
+                style={{
+                  padding: 14,
+                  background: '#c0c0c0',
+                  marginBottom: 12,
+                }}
+              >
+                <form onSubmit={handleSubmit}>
+                  <div style={{ fontSize: 11, color: '#333', marginBottom: 12 }}>
+                    <strong>Task:</strong> {OPERATIONS.find((o) => o.id === operation)?.desc}
+                  </div>
 
-                {/* FORMAT & OPTIONS GRID */}
-                <div style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
-                  gap: 12,
-                  marginBottom: 14
-                }}>
-                  {/* FORMAT FIELDSET */}
-                  <fieldset className="bevel-outset" style={{ padding: '8px 10px' }}>
-                    <legend style={{ fontFamily: 'var(--font-retro)', fontSize: 11, padding: '0 4px' }}>
-                      CONVERT_OUTPUT
-                    </legend>
-                    <div style={{ display: 'flex', gap: 16, marginTop: 4 }}>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
-                        <input
-                          type="radio"
-                          name="fmt"
-                          checked={format === 'mp4'}
-                          onChange={() => setFormat('mp4')}
-                        />
-                        <span>MP4 (Video)</span>
-                      </label>
-                      <label style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer', fontFamily: 'var(--font-mono)', fontSize: 13 }}>
-                        <input
-                          type="radio"
-                          name="fmt"
-                          checked={format === 'mp3'}
-                          onChange={() => setFormat('mp3')}
-                        />
-                        <span>MP3 (Audio)</span>
-                      </label>
-                    </div>
-                  </fieldset>
-
-                  {/* SNS EMAIL NOTIFIER */}
-                  <fieldset className="bevel-outset" style={{ padding: '8px 10px' }}>
-                    <legend style={{ fontFamily: 'var(--font-retro)', fontSize: 11, padding: '0 4px' }}>
-                      SNS_DISPATCH [OPTIONAL]
-                    </legend>
-                    <input
-                      type="email"
-                      value={email}
-                      onChange={e => setEmail(e.target.value)}
-                      placeholder="user@system.net"
+                  {/* FILE INPUT BOX */}
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ display: 'block', fontSize: 12, fontWeight: 'bold', marginBottom: 6 }}>
+                      {operation === 'img2pdf' ? 'Select Image(s) (JPG, PNG, WEBP):' : 'Select PDF Document:'}
+                    </label>
+                    <div
                       className="bevel-inset"
                       style={{
-                        width: '100%',
-                        padding: '5px 8px',
-                        fontSize: 12,
-                        fontFamily: 'var(--font-mono)',
-                        outline: 'none'
+                        padding: 10,
+                        background: '#ffffff',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 8,
                       }}
-                    />
-                  </fieldset>
-                </div>
-
-                {/* ERROR NOTIFIER */}
-                {error && (
-                  <div className="bevel-inset" style={{
-                    padding: '8px 12px',
-                    marginBottom: 14,
-                    backgroundColor: '#ffebe8',
-                    border: '1px solid var(--danger)',
-                    color: 'var(--danger)',
-                    fontSize: 12,
-                    fontFamily: 'var(--font-mono)'
-                  }}>
-                    {error}
+                    >
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        multiple={operation === 'img2pdf'}
+                        accept={operation === 'img2pdf' ? 'image/png, image/jpeg, image/webp' : 'application/pdf'}
+                        onChange={handleFileChange}
+                        style={{ fontSize: 12 }}
+                      />
+                      {selectedFiles.length > 0 && (
+                        <div style={{ fontSize: 11, color: '#000080' }}>
+                          Selected {selectedFiles.length} file(s) ({formatBytes(totalInputSize)} total):
+                          <ul style={{ margin: '4px 0 0 18px', padding: 0 }}>
+                            {selectedFiles.map((f, i) => (
+                              <li key={i}>{f.name} ({formatBytes(f.size)})</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
                   </div>
-                )}
 
-                {/* ACTION EXECUTE BUTTON */}
-                <div style={{ display: 'flex', gap: 10 }}>
+                  {/* OPERATION SPECIFIC OPTIONS */}
+                  {operation === 'compress' && (
+                    <div style={{ marginBottom: 14 }}>
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 'bold', marginBottom: 6 }}>
+                        Compression Preset:
+                      </label>
+                      <select
+                        value={compressLevel}
+                        onChange={(e) => setCompressLevel(e.target.value)}
+                        className="bevel-inset"
+                        style={{ width: '100%', padding: '6px 8px', fontSize: 12, background: '#fff' }}
+                      >
+                        <option value="screen">Screen (72 DPI) - Maximum reduction, ideal for mobile/email</option>
+                        <option value="ebook">eBook (150 DPI) - Standard web compression (Recommended)</option>
+                        <option value="printer">Printer (300 DPI) - High quality reduction for printouts</option>
+                      </select>
+                    </div>
+                  )}
+
+                  {operation === 'pdf2img' && (
+                    <div style={{ marginBottom: 14 }}>
+                      <label style={{ display: 'block', fontSize: 12, fontWeight: 'bold', marginBottom: 6 }}>
+                        Render Resolution:
+                      </label>
+                      <select
+                        value={dpi}
+                        onChange={(e) => setDpi(e.target.value)}
+                        className="bevel-inset"
+                        style={{ width: '100%', padding: '6px 8px', fontSize: 12, background: '#fff' }}
+                      >
+                        <option value="150">150 DPI (Standard Screen Quality - Fast)</option>
+                        <option value="300">300 DPI (High Resolution Print Quality)</option>
+                        <option value="72">72 DPI (Low Res / Fast Preview)</option>
+                      </select>
+                      <span style={{ fontSize: 10, color: '#555' }}>
+                        Single page PDFs download directly as .PNG. Multi-page PDFs download as a .ZIP archive.
+                      </span>
+                    </div>
+                  )}
+
+                  {/* STATUS / ERROR NOTICES */}
+                  {error && (
+                    <div
+                      className="bevel-inset"
+                      style={{
+                        padding: 8,
+                        background: '#ffe0e0',
+                        color: '#cc0000',
+                        fontSize: 11,
+                        marginBottom: 12,
+                        fontWeight: 'bold',
+                      }}
+                    >
+                      {error}
+                    </div>
+                  )}
+
+                  {statusMsg && (
+                    <div
+                      className="bevel-inset"
+                      style={{
+                        padding: 8,
+                        background: '#e0ffe0',
+                        color: '#006600',
+                        fontSize: 11,
+                        marginBottom: 12,
+                      }}
+                    >
+                      {statusMsg}
+                    </div>
+                  )}
+
+                  {/* ACTION BUTTON */}
                   <button
                     type="submit"
-                    disabled={loading}
+                    disabled={loading || selectedFiles.length === 0}
                     className="retro-button"
                     style={{
-                      flex: 1,
-                      padding: '10px 14px',
+                      width: '100%',
+                      padding: '8px 16px',
                       fontSize: 13,
                       fontWeight: 'bold',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 8,
-                      letterSpacing: '1px'
+                      cursor: loading || selectedFiles.length === 0 ? 'not-allowed' : 'pointer',
                     }}
                   >
-                    {loading ? (
-                      <>
-                        <span className="blink">■</span>
-                        <span>BUFFERING_JOB...</span>
-                      </>
-                    ) : (
-                      <>
-                        <span>💾</span>
-                        <span>EXECUTE_DOWNLOAD [SQS]</span>
-                      </>
-                    )}
+                    {loading ? 'PROCESSING VIA CLOUD WORKER...' : `EXECUTE ${operation.toUpperCase()} TASK`}
                   </button>
-
-                  <button
-                    type="button"
-                    onClick={fetchJobs}
-                    className="retro-button"
-                    style={{ padding: '10px 16px', fontSize: 12 }}
-                    title="Query EC2/RDS database"
-                  >
-                    ↻ REFRESH
-                  </button>
-                </div>
-              </form>
-
-              {/* QUEUE & COMPLETED RECORDS TABLE */}
-              <div style={{ marginTop: 20 }}>
-                <div style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  marginBottom: 6
-                }}>
-                  <span style={{ fontFamily: 'var(--font-retro)', fontSize: 11 }}>
-                    RDS_SQL_RECORD_STREAM [JOBS]
-                  </span>
-                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                    {jobs.length} records in buffer
-                  </span>
-                </div>
-
-                <div className="bevel-inset" style={{
-                  maxHeight: 260,
-                  overflowY: 'auto',
-                  backgroundColor: '#ffffff',
-                  padding: 4
-                }}>
-                  {jobs.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '24px 8px', color: 'var(--text-muted)', fontSize: 12 }}>
-                      -- NO JOBS DETECTED IN SPOOLER --
-                    </div>
-                  ) : (
-                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, textAlign: 'left' }}>
-                      <thead>
-                        <tr style={{ background: 'var(--surface)', borderBottom: '1px solid #000' }}>
-                          <th style={{ padding: '4px 6px', fontFamily: 'var(--font-retro)', fontSize: 10 }}>STATUS</th>
-                          <th style={{ padding: '4px 6px', fontFamily: 'var(--font-retro)', fontSize: 10 }}>FORMAT</th>
-                          <th style={{ padding: '4px 6px', fontFamily: 'var(--font-retro)', fontSize: 10 }}>METADATA / TITLE</th>
-                          <th style={{ padding: '4px 6px', fontFamily: 'var(--font-retro)', fontSize: 10, textAlign: 'right' }}>ACTION</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {jobs.map((j) => (
-                          <tr key={j.job_id} style={{ borderBottom: '1px solid #ececec' }}>
-                            <td style={{ padding: '6px', whiteSpace: 'nowrap' }}>
-                              {j.status === 'complete' && (
-                                <span style={{ color: 'var(--success)', fontWeight: 'bold' }}>[OK]</span>
-                              )}
-                              {j.status === 'processing' && (
-                                <span style={{ color: 'var(--warning)', fontWeight: 'bold' }} className="blink">
-                                  [CONV...]
-                                </span>
-                              )}
-                              {j.status === 'queued' && (
-                                <span style={{ color: '#000080', fontWeight: 'bold' }}>[SPOOL]</span>
-                              )}
-                              {j.status === 'failed' && (
-                                <span style={{ color: 'var(--danger)', fontWeight: 'bold' }}>[ERR]</span>
-                              )}
-                            </td>
-                            <td style={{ padding: '6px', fontFamily: 'var(--font-retro)', fontSize: 10 }}>
-                              {j.format?.toUpperCase()}
-                            </td>
-                            <td style={{ padding: '6px', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                              <div style={{ fontWeight: 600 }}>{j.title || j.url}</div>
-                              {j.error_msg && (
-                                <div style={{ color: 'var(--danger)', fontSize: 11, fontStyle: 'italic' }}>
-                                  {j.error_msg}
-                                </div>
-                              )}
-                            </td>
-                            <td style={{ padding: '6px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                              {j.status === 'complete' && j.download_url ? (
-                                <a
-                                  href={j.download_url}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="retro-button"
-                                  download
-                                  style={{
-                                    display: 'inline-block',
-                                    padding: '2px 8px',
-                                    fontSize: 10,
-                                    textDecoration: 'none',
-                                    color: 'var(--text)'
-                                  }}
-                                >
-                                  ↓ SAVE
-                                </a>
-                              ) : (
-                                <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>--</span>
-                              )}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  )}
-                </div>
+                </form>
               </div>
 
-              {/* STATUSBAR STRIP */}
-              <div className="bevel-inset" style={{
-                marginTop: 12,
-                padding: '3px 8px',
-                fontSize: 11,
-                display: 'flex',
-                justifyContent: 'space-between',
-                color: 'var(--text-muted)'
-              }}>
-                <span>VPC: 10.0.0.0/16</span>
-                <span>RDS: postgres:5432</span>
-                <span>STORAGE: S3 AES-256</span>
+              {/* RECENT JOBS TABLE */}
+              <div style={{ marginTop: 14 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 'bold' }}>Active & Completed Cloud Jobs</span>
+                  <span style={{ fontSize: 10, color: '#555' }}>Auto-refreshes every 3s</span>
+                </div>
+
+                <div
+                  className="bevel-inset"
+                  style={{
+                    background: '#ffffff',
+                    maxHeight: 240,
+                    overflowY: 'auto',
+                  }}
+                >
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 11 }}>
+                    <thead>
+                      <tr style={{ background: '#dcdcdc', borderBottom: '1px solid #999', textAlign: 'left' }}>
+                        <th style={{ padding: '4px 8px' }}>File</th>
+                        <th style={{ padding: '4px 8px' }}>Task</th>
+                        <th style={{ padding: '4px 8px' }}>Size</th>
+                        <th style={{ padding: '4px 8px' }}>Status</th>
+                        <th style={{ padding: '4px 8px' }}>Action</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {jobs.length === 0 ? (
+                        <tr>
+                          <td colSpan="5" style={{ padding: 16, textAlign: 'center', color: '#888' }}>
+                            No jobs in RDS database yet. Submit a task above.
+                          </td>
+                        </tr>
+                      ) : (
+                        jobs.map((j) => {
+                          const orig = j.original_size || 0
+                          const res = j.result_size || 0
+                          let sizeText = formatBytes(orig)
+                          if (res > 0 && res !== orig) {
+                            const diff = orig - res
+                            const pct = Math.round((diff / orig) * 100)
+                            sizeText = `${formatBytes(orig)} → ${formatBytes(res)} (${pct > 0 ? `-${pct}%` : `+${Math.abs(pct)}%`})`
+                          }
+
+                          return (
+                            <tr key={j.job_id} style={{ borderBottom: '1px solid #eee' }}>
+                              <td
+                                style={{
+                                  padding: '4px 8px',
+                                  maxWidth: 180,
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                }}
+                                title={j.filename || j.job_id}
+                              >
+                                {j.filename || j.job_id.substring(0, 10)}
+                              </td>
+                              <td style={{ padding: '4px 8px', textTransform: 'uppercase', fontWeight: 'bold', fontSize: 10 }}>
+                                {j.operation || 'process'}
+                              </td>
+                              <td style={{ padding: '4px 8px', fontSize: 10 }}>
+                                {sizeText}
+                              </td>
+                              <td style={{ padding: '4px 8px' }}>
+                                <span
+                                  style={{
+                                    padding: '1px 5px',
+                                    fontSize: 9,
+                                    fontWeight: 'bold',
+                                    color: '#fff',
+                                    background:
+                                      j.status === 'complete'
+                                        ? '#16a34a'
+                                        : j.status === 'processing'
+                                        ? '#d97706'
+                                        : j.status === 'failed'
+                                        ? '#dc2626'
+                                        : '#2563eb',
+                                  }}
+                                >
+                                  {j.status.toUpperCase()}
+                                </span>
+                              </td>
+                              <td style={{ padding: '4px 8px' }}>
+                                {j.status === 'complete' ? (
+                                  <a
+                                    href={`/api/download/${j.job_id}`}
+                                    download={j.filename || 'document.pdf'}
+                                    className="retro-button"
+                                    style={{
+                                      fontSize: 10,
+                                      padding: '1px 6px',
+                                      textDecoration: 'none',
+                                      color: '#000',
+                                      display: 'inline-block',
+                                    }}
+                                  >
+                                    ⬇ Download
+                                  </a>
+                                ) : j.status === 'failed' ? (
+                                  <span style={{ color: '#dc2626', fontSize: 10 }} title={j.error_msg}>
+                                    Error
+                                  </span>
+                                ) : (
+                                  <span style={{ color: '#888', fontSize: 10 }}>In Queue</span>
+                                )}
+                              </td>
+                            </tr>
+                          )
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
           </div>
         )}
 
-        {/* ── WINDOW 2: S3 BUCKET VIEWER ── */}
+        {/* ── S3 BUCKET VIEWER WINDOW ── */}
         {showLogs && (
           <div
             className="bevel-outset"
             onClick={() => setActiveWindow('logs')}
             style={{
               width: '100%',
-              maxWidth: 580,
+              maxWidth: 680,
               padding: 3,
               boxShadow: '4px 6px 0px rgba(0, 0, 0, 0.45)',
               zIndex: activeWindow === 'logs' ? 25 : 12,
-              marginBottom: 16
+              marginBottom: 16,
             }}
           >
-            <div className="title-bar" style={{
-              background: activeWindow === 'logs' ? 'linear-gradient(90deg, #000080, #1084d0)' : 'linear-gradient(90deg, #808080, #a0a0a0)'
-            }}>
+            <div
+              className="title-bar"
+              style={{
+                background: activeWindow === 'logs' ? '#000080' : '#808080',
+                color: '#ffffff',
+                padding: '3px 4px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                fontWeight: 'bold',
+                fontSize: 12,
+              }}
+            >
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span>🗄️</span>
-                <span>S3_BUCKET://clouddrop-media-23871</span>
+                <span>AMAZON S3 EXPLORER [clouddrop-media-23871]</span>
               </div>
               <button
                 onClick={(e) => { e.stopPropagation(); setShowLogs(false); }}
@@ -576,48 +651,63 @@ export default function App() {
                 ✕
               </button>
             </div>
-            <div style={{ padding: 10, background: 'var(--surface)' }}>
-              <div className="bevel-inset" style={{ padding: 10, background: '#fff', fontSize: 12, fontFamily: 'var(--font-mono)' }}>
-                <p><strong>Bucket:</strong> clouddrop-media-23871</p>
-                <p><strong>Encryption:</strong> AES256 (Server-Side)</p>
-                <p><strong>Lifecycle:</strong> Auto-expire after 24 hours (Day=1)</p>
-                <p><strong>Total Completed Objects:</strong> {jobs.filter(j => j.status === 'complete').length}</p>
-                <hr style={{ margin: '8px 0', border: 'none', borderTop: '1px solid #ccc' }} />
-                <div style={{ maxHeight: 150, overflowY: 'auto' }}>
-                  {jobs.filter(j => j.status === 'complete').map(j => (
-                    <div key={j.job_id} style={{ padding: '3px 0' }}>
-                      📄 {j.title || j.job_id}.{j.format}
-                    </div>
-                  ))}
-                  {jobs.filter(j => j.status === 'complete').length === 0 && (
-                    <span style={{ color: '#888' }}>No objects uploaded yet.</span>
-                  )}
+            <div style={{ padding: 8, background: '#c0c0c0' }}>
+              <div
+                className="bevel-inset"
+                style={{
+                  padding: 8,
+                  background: '#ffffff',
+                  fontSize: 11,
+                  maxHeight: 280,
+                  overflowY: 'auto',
+                }}
+              >
+                <div style={{ marginBottom: 8, fontWeight: 'bold', color: '#000080' }}>
+                  Bucket: clouddrop-media-23871 (Server-side AES256, 24-hr Expiration Lifecycle)
                 </div>
+                {jobs.map((j) => (
+                  <div key={j.job_id} style={{ padding: '4px 0', borderBottom: '1px solid #eee' }}>
+                    <div><strong>Key:</strong> processed/{j.job_id}/{j.filename || 'document.pdf'}</div>
+                    <div style={{ color: '#555', fontSize: 10 }}>
+                      Created: {formatDate(j.created_at)} | Size: {formatBytes(j.result_size || j.original_size)}
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
           </div>
         )}
 
-        {/* ── WINDOW 3: ABOUT.TXT NOTEPAD ── */}
+        {/* ── ABOUT WINDOW ── */}
         {showAbout && (
           <div
             className="bevel-outset"
             onClick={() => setActiveWindow('about')}
             style={{
               width: '100%',
-              maxWidth: 520,
+              maxWidth: 540,
               padding: 3,
               boxShadow: '4px 6px 0px rgba(0, 0, 0, 0.45)',
               zIndex: activeWindow === 'about' ? 30 : 14,
-              marginBottom: 16
+              marginBottom: 16,
             }}
           >
-            <div className="title-bar" style={{
-              background: activeWindow === 'about' ? 'linear-gradient(90deg, #000080, #1084d0)' : 'linear-gradient(90deg, #808080, #a0a0a0)'
-            }}>
+            <div
+              className="title-bar"
+              style={{
+                background: activeWindow === 'about' ? '#000080' : '#808080',
+                color: '#ffffff',
+                padding: '3px 4px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                fontWeight: 'bold',
+                fontSize: 12,
+              }}
+            >
               <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <span>📋</span>
-                <span>ABOUT.TXT - Notepad</span>
+                <span>ARCHITECTURE.TXT - Notepad</span>
               </div>
               <button
                 onClick={(e) => { e.stopPropagation(); setShowAbout(false); }}
@@ -627,226 +717,212 @@ export default function App() {
                 ✕
               </button>
             </div>
-            <div style={{ padding: 8, background: 'var(--surface)' }}>
-              <div className="bevel-inset" style={{ padding: 12, background: '#fff', fontSize: 12, lineHeight: 1.6, fontFamily: 'var(--font-mono)' }}>
-                <strong>CloudDrop Architecture v2.4</strong><br />
-                • Frontend: React 18, Vite<br />
-                • Backend: FastAPI (Python 3.9), Nginx<br />
-                • Queue: Amazon SQS (clouddrop-jobs)<br />
-                • Database: Amazon RDS PostgreSQL 15<br />
-                • Storage: Amazon S3 with 24hr auto-delete<br />
-                • Compute: Amazon EC2 (t3.micro, AL2023)<br />
-                • Network: Custom VPC (10.0.0.0/16, 4 subnets)<br />
-                • Secrets: SSM Parameter Store (/clouddrop/*)<br />
-                • Auto-Stop: CloudWatch idle alarm (30m &lt; 5% CPU)
+            <div style={{ padding: 8, background: '#c0c0c0' }}>
+              <div
+                className="bevel-inset"
+                style={{
+                  padding: 12,
+                  background: '#ffffff',
+                  fontSize: 12,
+                  lineHeight: 1.6,
+                }}
+              >
+                <strong>CloudDrop Document Processing Pipeline</strong><br />
+                • <strong>Features:</strong> Image to PDF, PDF to Image, PDF Compress<br />
+                • <strong>Frontend:</strong> React 18, Vite (Static build served by Nginx)<br />
+                • <strong>API Layer:</strong> FastAPI, Python 3.9 on Amazon EC2 (t3.micro)<br />
+                • <strong>Queue:</strong> Amazon SQS (clouddrop-jobs) for decoupled async jobs<br />
+                • <strong>Storage:</strong> Amazon S3 with 24-hr lifecycle & pre-signed download URLs<br />
+                • <strong>Database:</strong> Amazon RDS PostgreSQL 15 in private subnets<br />
+                • <strong>VPC:</strong> Custom 10.0.0.0/16 VPC with 4 subnets across 2 AZs<br />
+                • <strong>Engines:</strong> Ghostscript 9.56 (compression), PyMuPDF & Pillow (image conversion)<br />
+                • <strong>Alerts:</strong> Amazon SNS + CloudWatch idle auto-stop & $20 budget
               </div>
             </div>
           </div>
         )}
-
       </div>
 
-      {/* ── START MENU POPUP ── */}
+      {/* ── START MENU ── */}
       {startMenuOpen && (
         <div
           className="bevel-outset"
           onClick={(e) => e.stopPropagation()}
           style={{
             position: 'fixed',
-            bottom: 38,
+            bottom: 34,
             left: 2,
             width: 220,
-            padding: 3,
             zIndex: 100,
-            boxShadow: '4px 4px 0px rgba(0,0,0,0.5)'
+            padding: 3,
+            boxShadow: '3px 3px 0 #000',
           }}
         >
-          <div style={{ display: 'flex' }}>
-            <div style={{
-              width: 28,
-              background: 'linear-gradient(180deg, #000080, #1084d0)',
-              color: '#fff',
-              writingMode: 'vertical-rl',
-              transform: 'rotate(180deg)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
+          <div
+            style={{
+              background: '#000080',
+              color: '#ffffff',
+              padding: '6px 8px',
               fontFamily: 'var(--font-retro)',
-              fontSize: 13,
-              letterSpacing: '1px',
-              padding: '8px 0'
-            }}>
-              CloudDrop
-            </div>
-            <div style={{ flex: 1, padding: 4, display: 'flex', flexDirection: 'column', gap: 4 }}>
-              <button
-                className="retro-button"
-                onClick={() => { setShowMain(true); setActiveWindow('main'); setStartMenuOpen(false); }}
-                style={{ textAlign: 'left', padding: '6px 10px', fontSize: 12 }}
-              >
-                💾 CloudDrop.exe
-              </button>
-              <button
-                className="retro-button"
-                onClick={() => { setShowLogs(true); setActiveWindow('logs'); setStartMenuOpen(false); }}
-                style={{ textAlign: 'left', padding: '6px 10px', fontSize: 12 }}
-              >
-                🗄️ S3 Storage Bucket
-              </button>
-              <button
-                className="retro-button"
-                onClick={() => { setShowAbout(true); setActiveWindow('about'); setStartMenuOpen(false); }}
-                style={{ textAlign: 'left', padding: '6px 10px', fontSize: 12 }}
-              >
-                📋 About CloudDrop
-              </button>
-              <hr style={{ border: 'none', borderTop: '1px solid var(--border-dark)', margin: '4px 0' }} />
-              <button
-                className="retro-button"
-                onClick={() => { fetchJobs(); setStartMenuOpen(false); }}
-                style={{ textAlign: 'left', padding: '6px 10px', fontSize: 12 }}
-              >
-                ↻ Refresh DB Queue
-              </button>
-            </div>
+              fontSize: 12,
+              fontWeight: 'bold',
+              letterSpacing: 1,
+              marginBottom: 4,
+            }}
+          >
+            CloudDrop OS
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <button
+              className="retro-button"
+              style={{ textAlign: 'left', padding: '6px 10px', fontSize: 11 }}
+              onClick={() => { setShowMain(true); setActiveWindow('main'); setStartMenuOpen(false); }}
+            >
+              📑 Open Document Tools
+            </button>
+            <button
+              className="retro-button"
+              style={{ textAlign: 'left', padding: '6px 10px', fontSize: 11 }}
+              onClick={() => { setShowLogs(true); setActiveWindow('logs'); setStartMenuOpen(false); }}
+            >
+              🗄️ Browse S3 Storage
+            </button>
+            <button
+              className="retro-button"
+              style={{ textAlign: 'left', padding: '6px 10px', fontSize: 11 }}
+              onClick={() => { setShowAbout(true); setActiveWindow('about'); setStartMenuOpen(false); }}
+            >
+              📋 Architecture Spec
+            </button>
+            <button
+              className="retro-button"
+              style={{ textAlign: 'left', padding: '6px 10px', fontSize: 11 }}
+              onClick={() => { fetchJobs(); setStartMenuOpen(false); }}
+            >
+              🔄 Sync Database
+            </button>
           </div>
         </div>
       )}
 
-      {/* ── TASKBAR (Fixed Bottom) ── */}
-      <footer className="bevel-outset" style={{
-        position: 'fixed',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        height: 38,
-        display: 'flex',
-        alignItems: 'center',
-        padding: '0 4px',
-        zIndex: 50,
-        gap: 6
-      }}>
-        {/* START BUTTON */}
-        <button
-          className={`retro-button ${startMenuOpen ? 'active' : ''}`}
-          onClick={(e) => { e.stopPropagation(); setStartMenuOpen(!startMenuOpen); }}
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            height: 28,
-            padding: '2px 10px',
-            fontFamily: 'var(--font-retro)',
-            fontWeight: 'bold',
-            fontSize: 12
-          }}
-        >
-          <span style={{ fontSize: 14 }}>🪟</span>
-          <span>Start</span>
-        </button>
-
-        {/* TASKBAR ITEM: MAIN WINDOW */}
-        {showMain && (
-          <div
-            className={activeWindow === 'main' ? 'bevel-inset' : 'bevel-outset'}
-            onClick={() => setActiveWindow('main')}
+      {/* ── BOTTOM TASKBAR ── */}
+      <div
+        className="bevel-outset"
+        style={{
+          position: 'fixed',
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: 32,
+          padding: '2px 4px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          zIndex: 90,
+          userSelect: 'none',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+          {/* START BUTTON */}
+          <button
+            onClick={() => setStartMenuOpen(!startMenuOpen)}
+            className={startMenuOpen ? 'bevel-inset' : 'bevel-outset'}
             style={{
-              height: 28,
-              padding: '4px 10px',
+              padding: '2px 8px',
+              height: 24,
               fontSize: 11,
               fontFamily: 'var(--font-retro)',
+              fontWeight: 'bold',
               display: 'flex',
               alignItems: 'center',
-              gap: 6,
-              maxWidth: 160,
-              overflow: 'hidden',
-              whiteSpace: 'nowrap',
+              gap: 4,
               cursor: 'pointer',
-              backgroundColor: 'var(--surface)'
+              background: '#c0c0c0',
             }}
           >
-            <span>💾</span>
-            <span>CloudDrop</span>
-          </div>
-        )}
+            <span>🏁</span> Start
+          </button>
 
-        {/* TASKBAR ITEM: S3 BUCKET */}
-        {showLogs && (
-          <div
-            className={activeWindow === 'logs' ? 'bevel-inset' : 'bevel-outset'}
-            onClick={() => setActiveWindow('logs')}
-            style={{
-              height: 28,
-              padding: '4px 10px',
-              fontSize: 11,
-              fontFamily: 'var(--font-retro)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              maxWidth: 140,
-              overflow: 'hidden',
-              whiteSpace: 'nowrap',
-              cursor: 'pointer',
-              backgroundColor: 'var(--surface)'
-            }}
-          >
-            <span>🗄️</span>
-            <span>S3_Bucket</span>
-          </div>
-        )}
+          {/* TASKBAR WINDOW TABS */}
+          {showMain && (
+            <button
+              className={activeWindow === 'main' ? 'bevel-inset' : 'bevel-outset'}
+              onClick={() => setActiveWindow('main')}
+              style={{
+                height: 24,
+                padding: '2px 8px',
+                fontSize: 11,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+                background: '#c0c0c0',
+                fontWeight: activeWindow === 'main' ? 'bold' : 'normal',
+                maxWidth: 160,
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              <span>📑</span> CloudDoc.exe
+            </button>
+          )}
 
-        {/* TASKBAR ITEM: ABOUT */}
-        {showAbout && (
-          <div
-            className={activeWindow === 'about' ? 'bevel-inset' : 'bevel-outset'}
-            onClick={() => setActiveWindow('about')}
-            style={{
-              height: 28,
-              padding: '4px 10px',
-              fontSize: 11,
-              fontFamily: 'var(--font-retro)',
-              display: 'flex',
-              alignItems: 'center',
-              gap: 6,
-              maxWidth: 140,
-              overflow: 'hidden',
-              whiteSpace: 'nowrap',
-              cursor: 'pointer',
-              backgroundColor: 'var(--surface)'
-            }}
-          >
-            <span>📋</span>
-            <span>About.txt</span>
-          </div>
-        )}
+          {showLogs && (
+            <button
+              className={activeWindow === 'logs' ? 'bevel-inset' : 'bevel-outset'}
+              onClick={() => setActiveWindow('logs')}
+              style={{
+                height: 24,
+                padding: '2px 8px',
+                fontSize: 11,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+                background: '#c0c0c0',
+                fontWeight: activeWindow === 'logs' ? 'bold' : 'normal',
+              }}
+            >
+              <span>🗄️</span> S3_Bucket
+            </button>
+          )}
 
-        {/* SYSTEM TRAY (RIGHT) */}
+          {showAbout && (
+            <button
+              className={activeWindow === 'about' ? 'bevel-inset' : 'bevel-outset'}
+              onClick={() => setActiveWindow('about')}
+              style={{
+                height: 24,
+                padding: '2px 8px',
+                fontSize: 11,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+                background: '#c0c0c0',
+                fontWeight: activeWindow === 'about' ? 'bold' : 'normal',
+              }}
+            >
+              <span>📋</span> Architecture
+            </button>
+          )}
+        </div>
+
+        {/* SYSTEM TRAY WITH CLOCK */}
         <div
           className="bevel-inset"
           style={{
-            marginLeft: 'auto',
-            height: 28,
-            padding: '0 10px',
+            height: 22,
+            padding: '0 8px',
+            fontSize: 11,
             display: 'flex',
             alignItems: 'center',
-            gap: 10,
-            fontSize: 11,
-            fontFamily: 'var(--font-mono)'
+            gap: 6,
+            background: '#ffffff',
           }}
         >
-          <span>☁️ EC2:OK</span>
-          <span>{time || '12:00:00'}</span>
+          <span>☁️</span>
+          <span>{time}</span>
         </div>
-      </footer>
-
-      {/* RESPONSIVE DESKTOP-SPECIFIC MEDIA QUERIES */}
-      <style>{`
-        @media (max-width: 768px) {
-          .desktop-only {
-            display: none !important;
-          }
-        }
-      `}</style>
+      </div>
     </div>
   )
 }

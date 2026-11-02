@@ -23,6 +23,7 @@ cookies.txt
 node_modules/
 .npm
 dist/
+!clouddrop/frontend/dist/
 build/
 .vite/
 
