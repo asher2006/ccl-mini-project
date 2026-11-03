@@ -1,0 +1,66 @@
+{
+  "widgets": [
+    {
+      "type": "text",
+      "x": 0, "y": 0, "width": 24, "height": 2,
+      "properties": {
+        "markdown": "# 🚀 CloudDrop PDF Suite - Production Operational Metrics\nReal-time monitoring across EC2 Compute, SQS Message Queue, RDS PostgreSQL, and S3 Storage."
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0, "y": 2, "width": 12, "height": 6,
+      "properties": {
+        "metrics": [
+          ["AWS/EC2", "CPUUtilization", "InstanceId", "i-041d9c437d77036dc", {"label": "EC2 CPU %", "color": "#1f77b4"}]
+        ],
+        "period": 60,
+        "stat": "Average",
+        "region": "us-east-1",
+        "title": "EC2 Compute CPU Utilization"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12, "y": 2, "width": 12, "height": 6,
+      "properties": {
+        "metrics": [
+          ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", "clouddrop-jobs", {"label": "Pending Jobs (Queue Backlog)", "color": "#ff7f0e"}],
+          ["AWS/SQS", "ApproximateNumberOfMessagesNotVisible", "QueueName", "clouddrop-jobs", {"label": "Jobs Currently Processing", "color": "#2ca02c"}]
+        ],
+        "period": 60,
+        "stat": "Maximum",
+        "region": "us-east-1",
+        "title": "SQS Job Queue Depth & Active Tasks"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 0, "y": 8, "width": 12, "height": 6,
+      "properties": {
+        "metrics": [
+          ["AWS/RDS", "CPUUtilization", "DBInstanceIdentifier", "clouddrop-db", {"label": "RDS CPU %", "color": "#d62728"}],
+          ["AWS/RDS", "DatabaseConnections", "DBInstanceIdentifier", "clouddrop-db", {"label": "Active DB Connections", "yAxis": "right", "color": "#9467bd"}]
+        ],
+        "period": 60,
+        "stat": "Average",
+        "region": "us-east-1",
+        "title": "RDS PostgreSQL Health & Connections"
+      }
+    },
+    {
+      "type": "metric",
+      "x": 12, "y": 8, "width": 12, "height": 6,
+      "properties": {
+        "metrics": [
+          ["AWS/SQS", "NumberOfMessagesSent", "QueueName", "clouddrop-jobs", {"label": "Jobs Enqueued", "stat": "Sum"}],
+          ["AWS/SQS", "NumberOfMessagesDeleted", "QueueName", "clouddrop-jobs", {"label": "Jobs Finished", "stat": "Sum"}]
+        ],
+        "period": 60,
+        "stat": "Sum",
+        "region": "us-east-1",
+        "title": "Job Throughput (Enqueued vs Processed)"
+      }
+    }
+  ]
+}

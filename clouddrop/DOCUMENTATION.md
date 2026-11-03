@@ -354,3 +354,35 @@ curl -s http://184.195.164.225/api/jobs/<job_id>
 - [x] 2GB Swap file active to protect EC2 instance against memory starvation.
 - [x] Nginx reverse-proxy configured with `client_max_body_size 50m` and cache-busting headers.
 - [x] SQS Long Polling enabled (`WaitTimeSeconds=10`) for minimal AWS billing overhead.
+
+
+---
+
+## 10. Load Balancing, Auto Scaling, CORS & Observability
+
+### 10.1 Application Load Balancer (ALB) & Auto Scaling Group (ASG)
+- **ALB Security Group (`clouddrop-alb-sg`):** Inbound Port 80 from `0.0.0.0/0`.
+- **Target Group (`clouddrop-tg`):** HTTP Port 80 forward to EC2 with health checks on `/api/health` returning 200 OK.
+- **Launch Template (`clouddrop-lt`):** Amazon Linux 2023 with instance profile `clouddrop-ec2-role` and security group `clouddrop-ec2-sg`.
+- **Auto Scaling Group (`clouddrop-asg`):** Min: 1, Desired: 1, Max: 3, spanning public subnets (`subnet-02b0a4e2fc3985d03`, `subnet-08e77798b5fe9cac3`).
+- **SQS Backlog Scaling Policy:** Target tracking metric scaling on `AWS/SQS ApproximateNumberOfMessagesVisible` (target value = 10.0). When work accumulates in the queue, ASG automatically scales out EC2 worker nodes.
+
+### 10.2 S3 Bucket Policy (TLS Strict Enforcement + Least-Privilege IAM)
+Defined in `s3-policy.json`:
+- Denies all insecure HTTP (`aws:SecureTransport: false`) calls.
+- Permits read/write/list explicitly to `arn:aws:iam::205839628513:role/clouddrop-ec2-role`.
+
+### 10.3 Cross-Origin Resource Sharing (CORS)
+Defined in `s3-cors.json`:
+- Origins: `*`
+- Methods: `GET`, `PUT`, `POST`, `HEAD`, `DELETE`
+- Allowed Headers: `*`
+- Expose Headers: `ETag`, `Content-Disposition`, `Content-Length`
+- MaxAgeSeconds: `3600`
+
+### 10.4 CloudWatch Operations Dashboard (`CloudDrop-Platform-Monitor`)
+Defined in `cloudwatch-dashboard.json`:
+- **EC2 CPU Utilization:** Line chart tracking compute load.
+- **SQS Queue Backlog & In-Flight:** Real-time visibility into `ApproximateNumberOfMessagesVisible` and `ApproximateNumberOfMessagesNotVisible`.
+- **RDS Health:** CPU utilization and active PostgreSQL connections.
+- **Job Throughput:** Aggregated `NumberOfMessagesSent` vs `NumberOfMessagesDeleted`.
