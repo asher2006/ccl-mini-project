@@ -26,6 +26,80 @@ const OPERATIONS = [
   { id: 'compress', label: 'Compress PDF', icon: '🗜️', desc: 'Reduce PDF file size using Ghostscript optimization engine' },
 ]
 
+function FilePreviewItem({ file, index, onRemove, isImage }) {
+  const [thumb, setThumb] = useState(null)
+
+  useEffect(() => {
+    if (isImage && file.type && file.type.startsWith('image/')) {
+      const url = URL.createObjectURL(file)
+      setThumb(url)
+      return () => URL.revokeObjectURL(url)
+    }
+  }, [file, isImage])
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '4px 6px',
+        background: '#ffffff',
+        border: '1px solid #a0a0a0',
+        fontSize: 11,
+        gap: 8,
+      }}
+    >
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flex: 1 }}>
+        {thumb ? (
+          <img
+            src={thumb}
+            alt={file.name}
+            style={{ width: 28, height: 28, objectFit: 'cover', border: '1px solid #808080', flexShrink: 0 }}
+          />
+        ) : (
+          <span style={{ fontSize: 16, flexShrink: 0 }}>{isImage ? '🖼️' : '📄'}</span>
+        )}
+        <div style={{ minWidth: 0, overflow: 'hidden' }}>
+          <div
+            style={{
+              fontWeight: 'bold',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+              maxWidth: 380,
+            }}
+            title={file.name}
+          >
+            {file.name}
+          </div>
+          <div style={{ fontSize: 10, color: '#666' }}>{formatBytes(file.size)}</div>
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation()
+          onRemove(index)
+        }}
+        className="retro-button"
+        title="Remove file"
+        style={{
+          padding: '1px 6px',
+          fontSize: 10,
+          fontWeight: 'bold',
+          color: '#800000',
+          lineHeight: 1.2,
+          flexShrink: 0,
+        }}
+      >
+        ✕
+      </button>
+    </div>
+  )
+}
+
+
 export default function App() {
   const [operation, setOperation] = useState('img2pdf')
   const [selectedFiles, setSelectedFiles] = useState([])
@@ -43,9 +117,21 @@ export default function App() {
   const [showAbout, setShowAbout] = useState(false)
   const [startMenuOpen, setStartMenuOpen] = useState(false)
   const [activeWindow, setActiveWindow] = useState('main')
+  const [isDragging, setIsDragging] = useState(false)
 
   const fileInputRef = useRef(null)
   const pollingRef = useRef(null)
+
+  // Prevent browser navigating away when files dropped outside target
+  useEffect(() => {
+    const prevent = (e) => e.preventDefault()
+    window.addEventListener('dragover', prevent)
+    window.addEventListener('drop', prevent)
+    return () => {
+      window.removeEventListener('dragover', prevent)
+      window.removeEventListener('drop', prevent)
+    }
+  }, [])
 
   // System clock
   useEffect(() => {
@@ -74,12 +160,90 @@ export default function App() {
     return () => clearInterval(pollingRef.current)
   }, [])
 
-  const handleFileChange = (e) => {
-    if (e.target.files) {
-      const fileList = Array.from(e.target.files)
-      setSelectedFiles(fileList)
+  const validateAndAddFiles = (incomingFiles) => {
+    const files = Array.from(incomingFiles)
+    if (files.length === 0) return
+    setError('')
+
+    if (operation === 'img2pdf') {
+      const validImages = files.filter((f) =>
+        (f.type && f.type.startsWith('image/')) || /\.(jpe?g|png|webp)$/i.test(f.name)
+      )
+      if (validImages.length === 0) {
+        setError('ERROR: [INVALID_TYPE] Please select valid image files (JPG, PNG, WEBP).')
+        return
+      }
+      setSelectedFiles((prev) => {
+        const seen = new Set(prev.map((p) => `${p.name}-${p.size}`))
+        const fresh = validImages.filter((f) => !seen.has(`${f.name}-${f.size}`))
+        return [...prev, ...fresh]
+      })
+    } else {
+      const validPdf = files.find((f) =>
+        f.type === 'application/pdf' || /\.pdf$/i.test(f.name)
+      )
+      if (!validPdf) {
+        setError('ERROR: [INVALID_TYPE] Please select a valid PDF document (.pdf).')
+        return
+      }
+      setSelectedFiles([validPdf])
     }
   }
+
+  // Clipboard paste support (Ctrl+V)
+  useEffect(() => {
+    const handlePaste = (e) => {
+      if (e.clipboardData && e.clipboardData.files && e.clipboardData.files.length > 0) {
+        validateAndAddFiles(e.clipboardData.files)
+      }
+    }
+    window.addEventListener('paste', handlePaste)
+    return () => window.removeEventListener('paste', handlePaste)
+  }, [operation])
+
+  const handleFileChange = (e) => {
+    if (e.target.files && e.target.files.length > 0) {
+      validateAndAddFiles(e.target.files)
+    }
+  }
+
+  const handleDragOver = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (!isDragging) setIsDragging(true)
+  }
+
+  const handleDragEnter = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(true)
+  }
+
+  const handleDragLeave = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (e.currentTarget.contains(e.relatedTarget)) return
+    setIsDragging(false)
+  }
+
+  const handleDrop = (e) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(false)
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      validateAndAddFiles(e.dataTransfer.files)
+    }
+  }
+
+  const removeFile = (index) => {
+    setSelectedFiles((prev) => prev.filter((_, i) => i !== index))
+  }
+
+  const clearFiles = () => {
+    setSelectedFiles([])
+    if (fileInputRef.current) fileInputRef.current.value = ''
+  }
+
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -367,40 +531,114 @@ export default function App() {
                     <strong>Task:</strong> {OPERATIONS.find((o) => o.id === operation)?.desc}
                   </div>
 
-                  {/* FILE INPUT BOX */}
+                  {/* DRAG & DROP UPLOAD ZONE */}
                   <div style={{ marginBottom: 14 }}>
-                    <label style={{ display: 'block', fontSize: 12, fontWeight: 'bold', marginBottom: 6 }}>
-                      {operation === 'img2pdf' ? 'Select Image(s) (JPG, PNG, WEBP):' : 'Select PDF Document:'}
-                    </label>
-                    <div
-                      className="bevel-inset"
-                      style={{
-                        padding: 10,
-                        background: '#ffffff',
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: 8,
-                      }}
-                    >
-                      <input
-                        ref={fileInputRef}
-                        type="file"
-                        multiple={operation === 'img2pdf'}
-                        accept={operation === 'img2pdf' ? 'image/png, image/jpeg, image/webp' : 'application/pdf'}
-                        onChange={handleFileChange}
-                        style={{ fontSize: 12 }}
-                      />
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <label style={{ fontSize: 12, fontWeight: 'bold' }}>
+                        {operation === 'img2pdf' ? 'Upload Image(s) (JPG, PNG, WEBP):' : 'Upload PDF Document:'}
+                      </label>
                       {selectedFiles.length > 0 && (
-                        <div style={{ fontSize: 11, color: '#000080' }}>
-                          Selected {selectedFiles.length} file(s) ({formatBytes(totalInputSize)} total):
-                          <ul style={{ margin: '4px 0 0 18px', padding: 0 }}>
-                            {selectedFiles.map((f, i) => (
-                              <li key={i}>{f.name} ({formatBytes(f.size)})</li>
-                            ))}
-                          </ul>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={clearFiles}
+                          className="retro-button"
+                          style={{ fontSize: 10, padding: '2px 8px', cursor: 'pointer' }}
+                        >
+                          Clear All
+                        </button>
                       )}
                     </div>
+
+                    {/* Hidden Native File Input */}
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple={operation === 'img2pdf'}
+                      accept={operation === 'img2pdf' ? 'image/png, image/jpeg, image/webp' : 'application/pdf'}
+                      onChange={handleFileChange}
+                      style={{ display: 'none' }}
+                    />
+
+                    {/* Drag & Drop Visual Target */}
+                    <div
+                      className="bevel-inset"
+                      onDragOver={handleDragOver}
+                      onDragEnter={handleDragEnter}
+                      onDragLeave={handleDragLeave}
+                      onDrop={handleDrop}
+                      onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                      style={{
+                        padding: selectedFiles.length > 0 ? '14px 12px' : '22px 14px',
+                        background: isDragging ? '#e8f0fe' : '#ffffff',
+                        border: isDragging ? '2px dashed #000080' : '2px dashed #7f7f7f',
+                        cursor: 'pointer',
+                        textAlign: 'center',
+                        transition: 'background-color 0.15s, border-color 0.15s',
+                        userSelect: 'none',
+                      }}
+                    >
+                      <div style={{ fontSize: 30, marginBottom: 4 }}>
+                        {isDragging ? '📥' : (operation === 'img2pdf' ? '🖼️' : '📄')}
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 'bold',
+                          color: isDragging ? '#000080' : '#000000',
+                          marginBottom: 4,
+                        }}
+                      >
+                        {isDragging
+                          ? 'Drop file(s) here to stage for processing!'
+                          : 'Drag & drop file(s) here, or click to browse'}
+                      </div>
+                      <div style={{ fontSize: 10, color: '#666' }}>
+                        {operation === 'img2pdf'
+                          ? 'Supports JPG, PNG, WEBP • Multiple files supported • Paste with Ctrl+V'
+                          : 'Supports PDF (.pdf) • 50MB max file size'}
+                      </div>
+                    </div>
+
+                    {/* STAGED FILES PREVIEWS & MANAGEMENT */}
+                    {selectedFiles.length > 0 && (
+                      <div style={{ marginTop: 8 }}>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            fontWeight: 'bold',
+                            color: '#000080',
+                            marginBottom: 4,
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                          }}
+                        >
+                          <span>Staged for processing: {selectedFiles.length} file(s)</span>
+                          <span>Total: {formatBytes(totalInputSize)}</span>
+                        </div>
+                        <div
+                          className="bevel-inset"
+                          style={{
+                            maxHeight: 160,
+                            overflowY: 'auto',
+                            padding: 4,
+                            background: '#d4d0c8',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: 4,
+                          }}
+                        >
+                          {selectedFiles.map((f, i) => (
+                            <FilePreviewItem
+                              key={`${f.name}-${f.size}-${i}`}
+                              file={f}
+                              index={i}
+                              onRemove={removeFile}
+                              isImage={operation === 'img2pdf'}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* OPERATION SPECIFIC OPTIONS */}
